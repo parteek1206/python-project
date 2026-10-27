@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block heading %}Dashboard{% endblock %}
+{% block subheading %}Scrape books from books.toscrape.com, store in SQLite, and visualize with Pandas & Chart.js{% endblock %}
+
+{% block content %}
+<div class="card p-3 mb-4">
+  <div class="row g-3 align-items-center">
+    <div class="col-md-8">
+      <form class="scrape-form d-flex gap-2" method="post" action="{{ url_for('scrape') }}">
+        <div class="flex-grow-1">
+          <input type="number" name="pages" min="1" max="50" required placeholder="Pages to scrape (1 to 50, 20 books/page)" class="form-control">
+        </div>
+        <button class="btn btn-primary d-flex align-items-center gap-1" data-loading="Scraping...">
+          <span class="spinner-border spinner-border-sm d-none"></span>
+          <span class="btn-label">Scrape now</span>
+        </button>
+      </form>
+    </div>
+    <div class="col-md-4 text-md-end">
+      <form method="post" action="{{ url_for('clear') }}" onsubmit="return confirm('Delete all scraped data from SQLite?')">
+        <button class="btn btn-outline-danger w-100">Clear database</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if stats %}
+{% set cards = [
+  ('📚 Total books', stats.total),
+  ('💷 Avg price', '£' ~ stats.avg_price),
+  ('📊 Median price', '£' ~ stats.median_price),
+  ('↔️ Price range', '£' ~ stats.min_price|round|int ~ '–£' ~ stats.max_price|round|int),
+  ('⭐ Avg rating', stats.avg_rating ~ ' / 5'),
+  ('✅ In stock', stats.in_stock_pct ~ '%')
+] %}
+<div class="row g-3 mb-4">
+  {% for label, value in cards %}
+  <div class="col-6 col-md-4 col-lg-2">
+    <div class="card p-3 h-100 text-center text-md-start">
+      <div class="text-muted small">{{ label }}</div>
+      <div class="stat-value">{{ value }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Interactive Chart.js Graphs -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-4 col-md-6">
+    <div class="card p-3 h-100">
+      <h6 class="text-muted mb-3">Books per Star Rating</h6>
+      <div style="position: relative; height: 240px;">
+        <canvas id="ratingChart"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4 col-md-6">
+    <div class="card p-3 h-100">
+      <h6 class="text-muted mb-3">Average Price by Rating (£)</h6>
+      <div style="position: relative; height: 240px;">
+        <canvas id="priceChart"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4 col-md-12">
+    <div class="card p-3 h-100">
+      <h6 class="text-muted mb-3">Books by Price Range</h6>
+      <div style="position: relative; height: 240px;">
+        <canvas id="bucketChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card p-3">
+  <h5>🏆 Top 5 Most Expensive Books</h5>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr><th>Title</th><th>Price</th><th>Rating</th></tr>
+      </thead>
+      <tbody>
+        {% for b in top %}
+        <tr>
+          <td>{{ b.title }}</td>
+          <td>£{{ b.price }}</td>
+          <td class="stars">{{ '★' * b.rating }}{{ '☆' * (5 - b.rating) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card p-5 text-center">
+  <h4>No data in database</h4>
+  <p class="text-muted mb-0">Enter the number of pages above and click <b>Scrape now</b> to populate data.</p>
+</div>
+{% endif %}
+
+<script id="chart-data" type="application/json">
+  {{ chart_info|default({})|tojson|safe }}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Spinner loading logic
+  document.querySelectorAll(".scrape-form").forEach(function (form) {
+    form.addEventListener("submit", function () {
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      btn.querySelector(".spinner-border").classList.remove("d-none");
+      btn.querySelector(".btn-label").textContent = btn.dataset.loading;
+    });
+  });
+
+  const isDark = document.documentElement.getAttribute("data-bs-theme") === "dark";
+  Chart.defaults.color = isDark ? "#c9ced6" : "#555";
+  Chart.defaults.borderColor = isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)";
+
+  try {
+    const chartInfo = JSON.parse(document.getElementById("chart-data").textContent);
+
+    if (chartInfo && chartInfo.rating_labels && document.getElementById('ratingChart')) {
+      new Chart(document.getElementById('ratingChart'), {
+        type: 'bar',
+        data: {
+          labels: chartInfo.rating_labels,
+          datasets: [{ data: chartInfo.rating_counts, backgroundColor: '#4f46e5', borderRadius: 6 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+    }
+
+    if (chartInfo && chartInfo.price_labels && document.getElementById('priceChart')) {
+      new Chart(document.getElementById('priceChart'), {
+        type: 'bar',
+        data: {
+          labels: chartInfo.price_labels,
+          datasets: [{ data: chartInfo.price_values, backgroundColor: '#10b981', borderRadius: 6 }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    if (chartInfo && chartInfo.bucket_labels && document.getElementById('bucketChart')) {
+      new Chart(document.getElementById('bucketChart'), {
+        type: 'doughnut',
+        data: {
+          labels: chartInfo.bucket_labels,
+          datasets: [{
+            data: chartInfo.bucket_counts,
+            backgroundColor: ['#4f46e5', '#7c3aed', '#10b981', '#f59e0b', '#ef4444'],
+            hoverOffset: 4
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+  } catch (err) {
+    console.error("Charts load error:", err);
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,15 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite database file
+data/
+*.db
+*.sqlite3
+
+# Environment
+.env
+venv/
+env/
+.vscode/
